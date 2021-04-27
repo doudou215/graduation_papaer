@@ -18,6 +18,7 @@ from replay_buffer import ReplayBuffer
 import multiagent.scenarios as scenarios
 from model import openai_actor, openai_critic, QMIXNet
 from multiagent.environment import MultiAgentEnv
+from tensorboardX import SummaryWriter
 
 def make_env(scenario_name, arglist, benchmark=False):
     """ 
@@ -113,9 +114,12 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         q_cur, q_tar = torch.zeros((arglist.batch_size, 1)), torch.zeros((arglist.batch_size, 1))
         flag = 1
         _done_n = torch.FloatTensor(_done_n)
+        _rew_n = torch.FloatTensor(_rew_n)
 
         for agent_idx, (critic_c, critic_t) in enumerate(zip(critics_cur, critics_tar)):
             action_cur_o = torch.from_numpy(_action_n).to(arglist.device, torch.float)
+            if agent_idx > 5:
+                break
             obs_n_o = torch.from_numpy(_obs_n_o).to(arglist.device, torch.float)
             obs_n_n = torch.from_numpy(_obs_n_n).to(arglist.device, torch.float)
 
@@ -128,7 +132,7 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
                 flag = -1
             """
             q_cur += q
-            q_tar += torch.mul(q_, (1 - _done_n[:, agent_idx]).reshape(arglist.batch_size, -1))
+            q_tar = q_tar + torch.mul(q_, (1 - _done_n[:, agent_idx]).reshape(arglist.batch_size, -1)) + _rew_n[:, agent_idx].reshape(arglist.batch_size, -1)
 
         # q_cur: n_agents * batch_size, q_tar: n_agents * batch_size
         _state_n_n = _state_n[1:, ]
@@ -136,9 +140,8 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         _state_n_n = np.append(_state_n_n, tmp, axis=0)
         _state_n_n = torch.FloatTensor(_state_n_n)
         _state_n = torch.FloatTensor(_state_n)
-        _rew_n = torch.FloatTensor(_rew_n).sum(dim=1).reshape(arglist.batch_size, -1)
 
-        q_target = _rew_n + q_tar * arglist.gamma
+        q_target = q_tar * arglist.gamma
         loss_c = torch.nn.MSELoss()(q_cur, q_target.detach())
 
         for opt_c in optimizers_c:
@@ -147,7 +150,7 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         for critic in critics_cur:
             nn.utils.clip_grad_norm_(critic.parameters(), arglist.max_grad_norm)
         for opt_cn in optimizers_c:
-            opt_c.step()
+            opt_cn.step()
         n_agents = 8
         """
         q_total_eval = global_critic_cur(q_cur, _state_n, arglist.batch_size, n_agents)
@@ -165,7 +168,8 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             enumerate(zip(actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c)):
             if opt_c == None:
                 continue  # jump to the next model update
-
+            if agent_idx > 5:
+                break
             # sample the experience
             # _obs_n_o 当前所有人的观察的状态， _obs_n_n下一步所有人观察到的状态， _action_n所有人的动作，由于每个人可以选择五个动作，一共八个人，所以是40维
             # _done_n, _rew_n是自己的信息
@@ -254,7 +258,13 @@ def train(arglist):
         get_trainers(env, num_adversaries, obs_shape_n, action_shape_n, state_dim, arglist)
     #memory = Memory(num_adversaries, arglist)
     memory = ReplayBuffer(arglist.memory_size)
-    
+
+    '''
+    dim1 = sum(obs_shape_n)
+    dim2 = sum(action_shape_n)
+    with SummaryWriter(comment="qmix") as w:
+        w.add_graph(openai_critic(sum(obs_shape_n), sum(action_shape_n), arglist), (torch.zeros(1, dim1), torch.zeros(1, dim2)))
+    '''
     print('=2 The {} agents are inited ...'.format(env.n))
     print('=============================')
 
