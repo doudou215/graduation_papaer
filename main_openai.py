@@ -110,8 +110,10 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         # update the target par using the cur
         update_cnt += 1
         _state_n, _obs_n_o, _action_n, _rew_n, _obs_n_n, _done_n = memory.sample_all(arglist.batch_size)
-        q_cur, q_tar = torch.FloatTensor(), torch.FloatTensor()
+        q_cur, q_tar = torch.zeros((arglist.batch_size, 1)), torch.zeros((arglist.batch_size, 1))
         flag = 1
+        _done_n = torch.FloatTensor(_done_n)
+
         for agent_idx, (critic_c, critic_t) in enumerate(zip(critics_cur, critics_tar)):
             action_cur_o = torch.from_numpy(_action_n).to(arglist.device, torch.float)
             obs_n_o = torch.from_numpy(_obs_n_o).to(arglist.device, torch.float)
@@ -125,8 +127,8 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             if agent_idx > 5:
                 flag = -1
             """
-            q_cur = torch.cat([q_cur, q], dim=1) * flag
-            q_tar = torch.cat([q_tar, q_], dim=1) * flag
+            q_cur += q
+            q_tar += torch.mul(q_, (1 - _done_n[:, agent_idx]).reshape(arglist.batch_size, -1))
 
         # q_cur: n_agents * batch_size, q_tar: n_agents * batch_size
         _state_n_n = _state_n[1:, ]
@@ -134,12 +136,22 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         _state_n_n = np.append(_state_n_n, tmp, axis=0)
         _state_n_n = torch.FloatTensor(_state_n_n)
         _state_n = torch.FloatTensor(_state_n)
-        _rew_n = torch.FloatTensor(_rew_n)
-        _done_n = torch.FloatTensor(_done_n)
+        _rew_n = torch.FloatTensor(_rew_n).sum(dim=1).reshape(arglist.batch_size, -1)
 
+        q_target = _rew_n + q_tar * arglist.gamma
+        loss_c = torch.nn.MSELoss()(q_cur, q_target.detach())
+
+        for opt_c in optimizers_c:
+            opt_c.zero_grad()
+        loss_c.backward()
+        for critic in critics_cur:
+            nn.utils.clip_grad_norm_(critic.parameters(), arglist.max_grad_norm)
+        for opt_cn in optimizers_c:
+            opt_c.step()
         n_agents = 8
+        """
         q_total_eval = global_critic_cur(q_cur, _state_n, arglist.batch_size, n_agents)
-        q_total_target = global_critic_tar(q_tar, _state_n_n, arglist.batch_size, n_agents)
+        # q_total_target = global_critic_tar(q_tar, _state_n_n, arglist.batch_size, n_agents)
         targets = _rew_n.sum(dim=0) + q_total_target * arglist.gamma * (1 - _done_n)
         td_error = (q_total_eval - targets.detach())
         loss = (td_error ** 2).sum()
@@ -148,7 +160,7 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         torch.nn.utils.clip_grad_norm_(global_critic_cur.parameters(), arglist.max_grad_norm)
         optimizer_g.step()
         global_critic_tar = update_global_trainers(global_critic_cur, global_critic_tar, arglist.tao)
-
+        """
         for agent_idx, (actor_c, actor_t, critic_c, critic_t, opt_a, opt_c) in \
             enumerate(zip(actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c)):
             if opt_c == None:
