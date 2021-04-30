@@ -18,7 +18,6 @@ from replay_buffer import ReplayBuffer
 import multiagent.scenarios as scenarios
 from model import openai_actor, openai_critic, QMIXNet
 from multiagent.environment import MultiAgentEnv
-from tensorboardX import SummaryWriter
 
 def make_env(scenario_name, arglist, benchmark=False):
     """ 
@@ -66,9 +65,10 @@ def get_trainers(env, num_adversaries, obs_shape_n, action_shape_n, state_shape,
     critics_tar = update_trainers(critics_cur, critics_tar, 1.0)  # update the target par using the cur
 
     qmix_hidden_dim = 128
-    global_critic_cur = QMIXNet(qmix_hidden_dim, state_shape, env.n)
-    global_critic_tar = QMIXNet(qmix_hidden_dim, state_shape, env.n)
-    optimizer_g = optim.Adam(global_critic_cur.parameters(), arglist.lr_c)
+    global_critic_cur = QMIXNet(qmix_hidden_dim, state_shape, env.n - 2)
+    global_critic_tar = QMIXNet(qmix_hidden_dim, state_shape, env.n - 2)
+    optimizer_g = optim.Adam(list(global_critic_cur.parameters()) + list(actors_cur[0].parameters()) + list(actors_cur[1].parameters()) + list(actors_cur[2].parameters()) +\
+                             list(actors_cur[3].parameters()) + list(actors_cur[4].parameters()) + list(actors_cur[5].parameters()), arglist.lr_c)
     global_critic_tar.load_state_dict(global_critic_cur.state_dict())
     return actors_cur, critics_cur, actors_tar, critics_tar, global_critic_cur, global_critic_tar, optimizers_a, optimizers_c, optimizer_g
 
@@ -79,7 +79,9 @@ def update_trainers(agents_cur, agents_tar, tao):
     out:
     |agents_tar: the agents with new par updated towards agents_current
     """
-    for agent_c, agent_t in zip(agents_cur, agents_tar):
+    for idx, (agent_c, agent_t) in enumerate(zip(agents_cur, agents_tar)):
+        if idx > 5:
+            break
         key_list = list(agent_c.state_dict().keys())
         state_dict_t = agent_t.state_dict()
         state_dict_c = agent_c.state_dict()
@@ -111,15 +113,13 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         # update the target par using the cur
         update_cnt += 1
         _state_n, _obs_n_o, _action_n, _rew_n, _obs_n_n, _done_n = memory.sample_all(arglist.batch_size)
-        q_cur, q_tar = torch.zeros((arglist.batch_size, 1)), torch.zeros((arglist.batch_size, 1))
-        flag = 1
+        _rew_n = _rew_n[:, 0:6]
+        q_cur, q_tar = torch.FloatTensor(), torch.FloatTensor()
         _done_n = torch.FloatTensor(_done_n)
-        _rew_n = torch.FloatTensor(_rew_n)
-
         for agent_idx, (critic_c, critic_t) in enumerate(zip(critics_cur, critics_tar)):
-            action_cur_o = torch.from_numpy(_action_n).to(arglist.device, torch.float)
             if agent_idx > 5:
                 break
+            action_cur_o = torch.from_numpy(_action_n).to(arglist.device, torch.float)
             obs_n_o = torch.from_numpy(_obs_n_o).to(arglist.device, torch.float)
             obs_n_n = torch.from_numpy(_obs_n_n).to(arglist.device, torch.float)
 
@@ -131,8 +131,8 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             if agent_idx > 5:
                 flag = -1
             """
-            q_cur += q
-            q_tar = q_tar + torch.mul(q_, (1 - _done_n[:, agent_idx]).reshape(arglist.batch_size, -1)) + _rew_n[:, agent_idx].reshape(arglist.batch_size, -1)
+            q_cur = torch.cat([q_cur, q], dim=1)
+            q_tar = torch.cat([q_tar, q_], dim=1)
 
         # q_cur: n_agents * batch_size, q_tar: n_agents * batch_size
         _state_n_n = _state_n[1:, ]
@@ -140,36 +140,27 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         _state_n_n = np.append(_state_n_n, tmp, axis=0)
         _state_n_n = torch.FloatTensor(_state_n_n)
         _state_n = torch.FloatTensor(_state_n)
+        _rew_n = torch.FloatTensor(_rew_n)
+        _rew_n_shape = _rew_n.sum(dim=1).reshape(-1, 1)
 
-        q_target = q_tar * arglist.gamma
-        loss_c = torch.nn.MSELoss()(q_cur, q_target.detach())
-
-        for opt_c in optimizers_c:
-            opt_c.zero_grad()
-        loss_c.backward()
-        for critic in critics_cur:
-            nn.utils.clip_grad_norm_(critic.parameters(), arglist.max_grad_norm)
-        for opt_cn in optimizers_c:
-            opt_cn.step()
-        n_agents = 8
-        """
+        n_agents = 6
         q_total_eval = global_critic_cur(q_cur, _state_n, arglist.batch_size, n_agents)
-        # q_total_target = global_critic_tar(q_tar, _state_n_n, arglist.batch_size, n_agents)
-        targets = _rew_n.sum(dim=0) + q_total_target * arglist.gamma * (1 - _done_n)
-        td_error = (q_total_eval - targets.detach())
-        loss = (td_error ** 2).sum()
+        q_total_target = global_critic_tar(q_tar, _state_n_n, arglist.batch_size, n_agents)
+        targets = _rew_n_shape + q_total_target * arglist.gamma
+        loss = nn.MSELoss()(targets.detach(), q_total_eval)
         optimizer_g.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(global_critic_cur.parameters(), arglist.max_grad_norm)
+        for critic_c in critics_cur:
+            torch.nn.utils.clip_grad_norm_(critic_c.parameters(), arglist.max_grad_norm)
         optimizer_g.step()
         global_critic_tar = update_global_trainers(global_critic_cur, global_critic_tar, arglist.tao)
-        """
+        critics_tar = update_trainers(critics_cur, critics_tar, arglist.tao)
         for agent_idx, (actor_c, actor_t, critic_c, critic_t, opt_a, opt_c) in \
             enumerate(zip(actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c)):
             if opt_c == None:
                 continue  # jump to the next model update
-            if agent_idx > 5:
-                break
+
             # sample the experience
             # _obs_n_o 当前所有人的观察的状态， _obs_n_n下一步所有人观察到的状态， _action_n所有人的动作，由于每个人可以选择五个动作，一共八个人，所以是40维
             # _done_n, _rew_n是自己的信息
@@ -230,7 +221,6 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
 
         # update the tar par
         actors_tar = update_trainers(actors_cur, actors_tar, arglist.tao) 
-        critics_tar = update_trainers(critics_cur, critics_tar, arglist.tao)
     return update_cnt, actors_cur, actors_tar, critics_cur, critics_tar, global_critic_cur, global_critic_tar
 
 
@@ -258,13 +248,7 @@ def train(arglist):
         get_trainers(env, num_adversaries, obs_shape_n, action_shape_n, state_dim, arglist)
     #memory = Memory(num_adversaries, arglist)
     memory = ReplayBuffer(arglist.memory_size)
-
-    '''
-    dim1 = sum(obs_shape_n)
-    dim2 = sum(action_shape_n)
-    with SummaryWriter(comment="qmix") as w:
-        w.add_graph(openai_critic(sum(obs_shape_n), sum(action_shape_n), arglist), (torch.zeros(1, dim1), torch.zeros(1, dim2)))
-    '''
+    
     print('=2 The {} agents are inited ...'.format(env.n))
     print('=============================')
 
@@ -330,6 +314,7 @@ def train(arglist):
             # print(action_n)
             # shape 8 * 5
             state, new_obs_n, rew_n, done_n, info_n = env.step(action_n)
+
             # action_n 一共有env.n个元素，每个元素的大小都是5， 所以是 8 * 5
             # env.render()
             # save the experience
@@ -337,6 +322,7 @@ def train(arglist):
             # rew_n shape 1 * 8
             # done_n shape 1 * 8
             memory.add(state, obs_n, np.concatenate(action_n), rew_n, new_obs_n, done_n)
+            # rew_n = rew_n[:6]
             episode_rewards[-1] += np.sum(rew_n)
             for i, rew in enumerate(rew_n):
                 agent_rewards[i][-1] += rew
@@ -353,6 +339,8 @@ def train(arglist):
             obs_n = new_obs_n
             done = all(done_n)
             terminal = (episode_cnt >= arglist.per_episode_max_len-1)
+            if done:
+                print("done")
             if done or terminal:
                 episode_step = 0
                 obs_n = env.reset()
