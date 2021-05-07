@@ -79,6 +79,7 @@ def find_minimum_regret(a1, a2, state):
             # print(i)
             state_x.remove(i)
             flag = 0
+    print(min_regret)
     state[0] = state_x
     state[1] = state[0]
     """
