@@ -1,6 +1,7 @@
 import numpy as np
 import copy
 from random import choice
+import matplotlib.pyplot as plt
 
 def find_minimum_regret(a1, a2, state):
     n = 101
@@ -137,9 +138,10 @@ if __name__ == '__main__':
     flag = 1
     # print(state)
     episode = 0
-    len = 500000
+    len = 10000
     epsilon = 0.8
-
+    episodes = []
+    rewards = []
     while episode < len:
         p = np.random.rand()
         # print(p)
@@ -151,23 +153,25 @@ if __name__ == '__main__':
             action2 = find_max_index(agent2.Q)
         reward1 = agent1.reward[action1, action2]
         reward2 = agent2.reward[action2, action1]
+        episodes.append(episode)
+        rewards.append(reward1 + reward2)
         if action1 == action2 and action1 == 97:
-            reward1 *= 100
-            reward2 *= 100
+            reward1 *= 1
+            reward2 *= 1
         # print(action1, action2, reward1, reward2)
         if action1 == 97:
-            regret_x = 5 / 3
+            regret_x = 1
         elif action1 >= 96 and action1 <= 100:
-            regret_x = 5 / 2
+            regret_x = 5
         else:
-            regret_x = 3
+            regret_x = 10
 
         if action2 == 97:
-            regret_y = 5 / 3
+            regret_y = 1
         elif action2 >= 96 and action2 <= 100:
-            regret_y = 5 / 2
+            regret_y = 5
         else:
-            regret_y = 3
+            regret_y = 10
 
         predict_Q = agent1.Q[action1]
         target_Q = reward1 - regret_x
@@ -177,12 +181,22 @@ if __name__ == '__main__':
         target_Q = reward2 - regret_y
         agent2.Q[action2] = predict_Q + agent2.lr * (target_Q - predict_Q)
 
-        epsilon -= 0.0000016
+        epsilon -= 0.00008
+
         episode += 1
+
+
         # print(reward1, reward2)
 
-    print(agent1.Q, np.argmax(agent1.Q))
-    print(agent2.Q, np.argmax(agent2.Q))
-
-
-
+    # print(agent1.Q, np.argmax(agent1.Q))
+    # print(agent2.Q, np.argmax(agent2.Q))
+    """
+    ln1 = plt.plot(episodes, rewards, color="green")
+    plt.legend(handles=[ln1], labels=['reward'])
+    """
+    plt.xlabel("episode")
+    plt.ylabel("reward")
+    plt.plot(episodes, rewards, "ob")
+    plt.show()
+    print(agent1.Q)
+    print(rewards[-1])
