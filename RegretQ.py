@@ -3,6 +3,7 @@ import copy
 from random import choice
 import matplotlib.pyplot as plt
 
+
 def find_minimum_regret(a1, a2, state):
     n = 101
     regret_table = np.zeros((n, n, 2))
@@ -193,13 +194,12 @@ if __name__ == '__main__':
         agent2.Q[action1, action2] = predict_Q + agent2.lr * (target_Q - predict_Q)
         """
         predict_Q = Q[action1, action2]
-        target_Q = reward1 + reward2 - regret_y - regret_x
-        Q[action1, action2] = predict_Q + lr * (target_Q - predict_Q)
+        target_Q = 0 - regret_y - regret_x
+        Q[action1, action1] = predict_Q + lr * (target_Q - predict_Q)
         # print(predict_Q, target_Q, Q[action1, action2])
-        epsilon -= 0.0000006
+        epsilon -= 0.000006
 
         episode += 1
-
 
         # print(reward1, reward2)
 
@@ -216,4 +216,8 @@ if __name__ == '__main__':
     plt.plot(episodes, rewards)
     plt.show()
 
+    for i in range(2, 101):
+        for j in range(2, 101):
+            print(Q[i, j], i, j, end=' ')
+        print('\n')
     print(rewards[-1])
