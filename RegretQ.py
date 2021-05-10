@@ -101,7 +101,7 @@ class Agent(object):
         # self.state = np.zeros((1, 101))
         self.reward = np.zeros((101, 101))
         # self.Qtable = dict()
-        self.Q = np.zeros(101)
+        self.Q = np.zeros((101, 101))
         self.lr = 0.1
         self.gamma = 0.9
         for i in range(2, 101):
@@ -116,12 +116,17 @@ class Agent(object):
 
 def find_max_index(Q):
     max = -1000
-    index = -1
+    indexi = -1
+    indexj = -1
     for i in range(2, 101):
-        if Q[i] > max:
-            index = i
-            max = Q[i]
-    return index
+        for j in range(2, 101):
+            # print(Q[i, j], i, j)
+            if Q[i, j] > max:
+                indexi = i
+                indexj = j
+                max = Q[i, j]
+    return indexi, indexj
+
 
 if __name__ == '__main__':
     agent1 = Agent()
@@ -134,14 +139,18 @@ if __name__ == '__main__':
     agent1.Qtable["".join(str(i) for i in state[0])] = 0
     agent2.Qtable["".join(str(i) for i in state[1])] = 0
     """
+    Q = np.zeros((101, 101))
     cnt = 0
     flag = 1
+    lr = 0.1
     # print(state)
     episode = 0
-    len = 10000
-    epsilon = 0.8
+    cnt = 0
+    len = 100000
+    epsilon = 0.6
     episodes = []
     rewards = []
+    reward = 0
     while episode < len:
         p = np.random.rand()
         # print(p)
@@ -149,15 +158,16 @@ if __name__ == '__main__':
             action1 = np.random.randint(2, 101)
             action2 = np.random.randint(2, 101)
         else:
-            action1 = find_max_index(agent1.Q)
-            action2 = find_max_index(agent2.Q)
+            action1, action2 = find_max_index(Q)
+        # print(action1, action2)
         reward1 = agent1.reward[action1, action2]
         reward2 = agent2.reward[action2, action1]
-        episodes.append(episode)
-        rewards.append(reward1 + reward2)
-        if action1 == action2 and action1 == 97:
-            reward1 *= 1
-            reward2 *= 1
+        reward = reward1 + reward2 + reward
+        if episode % 100 == 0:
+            episodes.append(cnt)
+            rewards.append(reward)
+            cnt += 1
+            reward = 0
         # print(action1, action2, reward1, reward2)
         if action1 == 97:
             regret_x = 1
@@ -173,15 +183,20 @@ if __name__ == '__main__':
         else:
             regret_y = 10
 
-        predict_Q = agent1.Q[action1]
+        """
+        predict_Q = agent1.Q[action1, action2]
         target_Q = reward1 - regret_x
-        agent1.Q[action1] = predict_Q + agent1.lr * (target_Q - predict_Q)
+        agent1.Q[action1, action2] = predict_Q + agent1.lr * (target_Q - predict_Q)
 
-        predict_Q = agent2.Q[action2]
+        predict_Q = agent2.Q[action1, action2]
         target_Q = reward2 - regret_y
-        agent2.Q[action2] = predict_Q + agent2.lr * (target_Q - predict_Q)
-
-        epsilon -= 0.00008
+        agent2.Q[action1, action2] = predict_Q + agent2.lr * (target_Q - predict_Q)
+        """
+        predict_Q = Q[action1, action2]
+        target_Q = reward1 + reward2 - regret_y - regret_x
+        Q[action1, action2] = predict_Q + lr * (target_Q - predict_Q)
+        # print(predict_Q, target_Q, Q[action1, action2])
+        epsilon -= 0.0000006
 
         episode += 1
 
@@ -194,9 +209,11 @@ if __name__ == '__main__':
     ln1 = plt.plot(episodes, rewards, color="green")
     plt.legend(handles=[ln1], labels=['reward'])
     """
+
     plt.xlabel("episode")
     plt.ylabel("reward")
-    plt.plot(episodes, rewards, "ob")
+    plt.figure
+    plt.plot(episodes, rewards)
     plt.show()
-    print(agent1.Q)
+
     print(rewards[-1])
