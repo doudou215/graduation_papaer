@@ -159,7 +159,7 @@ if __name__ == '__main__':
     # print(state)
     episode = 0
     cnt = 0
-    len = 100000
+    len = 0
     epsilon = 0.6
     episodes = []
     rewards = []
@@ -170,17 +170,19 @@ if __name__ == '__main__':
         if p < epsilon:
             action1 = np.random.randint(2, 101)
             action2 = np.random.randint(2, 101)
+            print(action1, action2, "epsilon")
         else:
             action1 = find_max_index(agent1.Q)
             action2 = find_max_index(agent2.Q)
 
-        # print(action1, action2)
+            print(action1, action2)
         reward1 = agent1.reward[action1, action2]
         reward2 = agent2.reward[action2, action1]
         reward = reward1 + reward2 + reward
 
         if episode % 100 == 0:
             episodes.append(episode)
+            reward /= 100
             rewards.append(reward)
             cnt += 1
             reward = 0
@@ -231,54 +233,63 @@ if __name__ == '__main__':
     agent1.Q = np.zeros(101)
     agent2.Q = np.zeros(101)
 
+    lr = 0.001
     len = 100000
-    epsilon = 0.6
-    # episodes = []
+    epsilon = 0.1
+    episodes = []
     episode = 0
     rewardsQ = []
     reward = 0
-
+    cnt = 0
+    # print(epsilon)
     while episode < len:
         p = np.random.rand()
         # print(p)
-        if p < epsilon:
-            action1 = np.random.randint(2, 101)
-            action2 = np.random.randint(2, 101)
-        else:
+        if np.random.uniform(0, 1) < 1 - epsilon:
             action1 = find_max_index(agent1.Q)
             action2 = find_max_index(agent2.Q)
-
-        # print(action1, action2)
-        reward1 = agent1.reward[action1, action2]
-        reward2 = agent2.reward[action2, action1]
+            # print(action1, action2)
+        else:
+            action1 = np.random.randint(low=2, high=101, size=1)
+            action2 = np.random.randint(low=2, high=101, size=1)
+            # print(action1, action2, "epsilon")
+        reward1 = int(agent1.reward[action1, action2])
+        reward2 = int(agent2.reward[action2, action1])
         reward = reward1 + reward2 + reward
 
-        if episode % 100 == 0:
-            # episodes.append(episode)
+        if episode % 100 == 0 and episode != 0:
+            episodes.append(cnt)
+            reward /= 100
             rewardsQ.append(reward)
             cnt += 1
             reward = 0
-
         # print(action1, action2, reward1, reward2)
         predict_Q = agent1.Q[action1]
-        target_Q = reward1
+        target_Q = reward1 + 0.9 * np.max(agent1.Q)
         agent1.Q[action1] = predict_Q + lr * (target_Q - predict_Q)
         
         predict_Q = agent2.Q[action2]
-        target_Q = reward2
+        target_Q = reward2 + 0.9 * np.max(agent2.Q)
         agent2.Q[action2] = predict_Q + lr * (target_Q - predict_Q)
         # print(predict_Q, target_Q, Q[action1, action2])
-        epsilon -= 0.000006
+        # epsilon -= 0.000006
 
         episode += 1
     
     plt.xlabel("episode")
     plt.ylabel("reward")
-    plt.figure
-    plt.plot(episodes, rewards)
-    plt.plot(episodes, rewardsQ)
-    plt.show()
+    plt.figure(figsize=(16, 10), dpi=120)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.xlabel("rewards", fontsize=20)
+    plt.ylabel("episodes", fontsize=20)
 
-    for i in range(2, 101):
-            print(agent1.Q[i], i)
-    print(rewards[-1])
+    plt.plot(episodes, rewardsQ, linewidth=2.5)
+    # plt.plot(episodes, rewards, linewidth=2.5)
+
+    plt.show()
+    print(episodes)
+    print(rewardsQ)
+    # for i in range(2, 101):
+        # print(agent1.Q[i], i)
+    # print(rewards[-1])
