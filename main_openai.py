@@ -18,6 +18,7 @@ from replay_buffer import ReplayBuffer
 import multiagent.scenarios as scenarios
 from model import openai_actor, openai_critic
 from multiagent.environment import MultiAgentEnv
+
 import matplotlib.pyplot as plt
 
 
@@ -144,23 +145,35 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
                 kl = F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
             # kl1 =  F.kl_div(policy_c_new_kl.softmax(dim=-1).log().detach(), policy_c_new.softmax(dim=-1), reduction='mean')
             """
-
+            """
             for i in range(5):
                 if agent_idx == i or agent_idx > 4:
                     continue
                 _, policy_c_new_kl = actors_cur[i](\
                     obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
                 kl += F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
+            """
+            if agent_idx == 4:
+                kl_index = 0
+            else:
+                kl_index = agent_idx + 1
+            # loss_pse = torch.mean(torch.pow(model_out, 2))
+            actor_kl = actors_cur[kl_index]
+            policy_c_new_kl, _ = actor_kl( \
+                obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
 
-            loss_pse = torch.mean(torch.pow(model_out, 2))
+            # kl = F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
+            # print(policy_c_new_kl, " ", model_out)
+            loss_fn = torch.nn.KLDivLoss()
+            loss_kl = loss_fn(model_out.softmax(dim=-1), policy_c_new_kl.softmax(dim=-1).detach())
             loss_a = torch.mul(-1, torch.mean(critic_c(obs_n_o, action_cur_o)))
                         
             opt_a.zero_grad()
 
             # (1e-3*loss_pse+loss_a).backward()
             # (1e-3*loss_pse +loss_a - kl).backward()
-            (loss_a - (kl)).backward()
-            # print("kl", kl)
+            (loss_a - loss_kl).backward()
+            # print("kl", kl, " ", agent_idx)
             nn.utils.clip_grad_norm_(actor_c.parameters(), arglist.max_grad_norm)
             opt_a.step()
 
