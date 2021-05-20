@@ -18,8 +18,20 @@ from replay_buffer import ReplayBuffer
 import multiagent.scenarios as scenarios
 from model import openai_actor, openai_critic
 from multiagent.environment import MultiAgentEnv
+import random
 
 import matplotlib.pyplot as plt
+
+
+def seed_torch(seed=1029):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed) # 为了禁止hash随机化，使得实验可复现
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 def make_env(scenario_name, arglist, benchmark=False):
@@ -130,30 +142,43 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             model_out, policy_c_new = actor_c(\
                 obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
             # update the aciton of this agent
-            # 下面这句保证了buffer中的数据只能被当前actor使用一次
+            # 下面这句保证了buffer中的数据只能被当前actor使用一次, 永远是当前actor所做出的的选择
             action_cur_o[:, action_size[agent_idx][0]:action_size[agent_idx][1]] = policy_c_new
             # 计算kl散度
 
-            kl = 0
+            loss_kl = torch.zeros(1)
 
-            """
-            if agent_idx == 0 or agent_idx == 1:
-                actor_kl = actors_cur[0] if agent_idx == 1 else actors_cur[1]
-                _, policy_c_new_kl = actor_kl(\
+
+            if agent_idx == 1 or agent_idx == 2:
+                actor_kl = actors_cur[2] if agent_idx == 1 else actors_cur[1]
+                policy_c_new_kl, _ = actor_kl(\
                     obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
+                # policy_c_new_1 = model_out.softmax(dim=-1)
+                # policy_c_new_kl = policy_c_new_kl.softmax(dim=-1).detach()
+                # print(policy_c_new_1)
+                # print(policy_c_new_kl)
 
-                kl = F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
-            # kl1 =  F.kl_div(policy_c_new_kl.softmax(dim=-1).log().detach(), policy_c_new.softmax(dim=-1), reduction='mean')
+                loss_fn = torch.nn.KLDivLoss()
+                loss_kl = loss_fn(model_out.softmax(dim=-1), policy_c_new_kl.softmax(dim=-1).detach())
+                """
+                
+                for i in range(policy_c_new_1.shape[1]):
+                    kl += policy_c_new_1[:, i].reshape(1256, 1) * torch.log(policy_c_new_1[:,i].reshape(1256, 1) / (policy_c_new_kl[:,i].reshape(1256, 1) + 1e-10) + 1e-10)
+            #   """
+            # print(kl.mean())
+
             """
-            """
-            for i in range(5):
-                if agent_idx == i or agent_idx > 4:
+            for i in range(2):
+                if agent_idx == i or agent_idx > 1:
                     continue
                 _, policy_c_new_kl = actors_cur[i](\
                     obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
                 kl += F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
             """
-            if agent_idx == 4:
+
+
+            """   
+            if agent_idx == 2:
                 kl_index = 0
             else:
                 kl_index = agent_idx + 1
@@ -161,18 +186,24 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             actor_kl = actors_cur[kl_index]
             policy_c_new_kl, _ = actor_kl( \
                 obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
-
+            
             # kl = F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
             # print(policy_c_new_kl, " ", model_out)
             loss_fn = torch.nn.KLDivLoss()
             loss_kl = loss_fn(model_out.softmax(dim=-1), policy_c_new_kl.softmax(dim=-1).detach())
+            """
+            # loss_a = torch.mul(-1, torch.mean(critic_c(obs_n_o, action_cur_o)))
+
+            # loss_pse = torch.mean(torch.pow(model_out, 2))
             loss_a = torch.mul(-1, torch.mean(critic_c(obs_n_o, action_cur_o)))
-                        
             opt_a.zero_grad()
 
             # (1e-3*loss_pse+loss_a).backward()
             # (1e-3*loss_pse +loss_a - kl).backward()
-            (loss_a - loss_kl).backward()
+
+            # print(kl.mean())
+            print(loss_kl)
+            (loss_a + loss_kl * 0.0001).backward()
             # print("kl", kl, " ", agent_idx)
             nn.utils.clip_grad_norm_(actor_c.parameters(), arglist.max_grad_norm)
             opt_a.step()
@@ -194,35 +225,8 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
 
         # update the tar par
 
-        """
-        agent_idx = 1
-        critic_c = critics_cur[agent_idx]
-        critic_t = critics_tar[agent_idx - 1]
-        opt_c = optimizers_c[agent_idx]
-        _obs_n_o, _action_n, _rew_n, _obs_n_n, _done_n = memory.sample( \
-            arglist.batch_size, agent_idx)
-        rew = torch.tensor(_rew_n, device=arglist.device, dtype=torch.float)  # set the rew to gpu
-        done_n = torch.tensor(~_done_n, dtype=torch.float, device=arglist.device)  # set the rew to gpu
-        action_cur_o = torch.from_numpy(_action_n).to(arglist.device, torch.float)
-        obs_n_o = torch.from_numpy(_obs_n_o).to(arglist.device, torch.float)
-        obs_n_n = torch.from_numpy(_obs_n_n).to(arglist.device, torch.float)
-        action_tar = torch.cat([a_t(obs_n_n[:, obs_size[idx][0]:obs_size[idx][1]]).detach() \
-                                for idx, a_t in enumerate(actors_tar)], dim=1)
-        q = critic_c(obs_n_o, action_cur_o).reshape(-1)  # q
-        q_ = critic_t(obs_n_n, action_tar).reshape(-1)  # q_
-
-        tar_value = q_ * arglist.gamma * done_n + rew  # q_*gamma*done + reward
-        loss_c = torch.nn.MSELoss()(q, tar_value)  # bellman equation
-        opt_c.zero_grad()
-        loss_c.backward()
-        nn.utils.clip_grad_norm_(critic_c.parameters(), arglist.max_grad_norm)
-        opt_c.step()
-        """
-
         actors_tar = update_trainers(actors_cur, actors_tar, arglist.tao)
         critics_tar = update_trainers(critics_cur, critics_tar, arglist.tao)
-        # actors_tar = update_trainers(actors_cur, actors_tar, arglist.tao)
-        # critics_tar = update_trainers(critics_cur, critics_tar, arglist.tao)
     return update_cnt, actors_cur, actors_tar, critics_cur, critics_tar
 
 
@@ -324,7 +328,7 @@ def train(arglist):
             if cnt == 20:
                 episode_json = [i for i in range(cnt)]
                 nums = {"episode":episode_json, "rewards":x_data}
-                filename = "kl-simple-spread-5.json"
+                filename = "kl-simple-push-2vs2-test.json"
                 with open(filename, 'w') as file_obj:
                     json.dump(nums, file_obj)
                 return
@@ -372,4 +376,5 @@ def train(arglist):
 
 if __name__ == '__main__':
     arglist = parse_args()
+    # seed_torch(1200)
     train(arglist)
