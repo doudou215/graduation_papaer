@@ -59,11 +59,16 @@ def get_trainers(env, num_adversaries, obs_shape_n, action_shape_n, arglist):
     optimizers_a = [None for _ in range(env.n)]
     input_size_global = sum(obs_shape_n) + sum(action_shape_n)
 
-    if arglist.restore == True:  # restore the model
+    if arglist.restore == True:
+        """# restore the model
         for idx in arglist.restore_idxs:
             trainers_cur[idx] = torch.load(arglist.old_model_name + 'c_{}'.format(agent_idx))
             trainers_tar[idx] = torch.load(arglist.old_model_name + 't_{}'.format(agent_idx))
-
+        """
+        actors_cur[4] = torch.load(arglist.old_model_name + 'a_c_4.pt')
+        critics_cur[4] = torch.load(arglist.old_model_name + 'c_c_4.pt')
+        optimizers_a[4] = optim.Adam(actors_cur[4].parameters(), arglist.lr_a)
+        optimizers_c[4] = optim.Adam(critics_cur[4].parameters(), arglist.lr_c)
     # Note: if you need load old model, there should be a procedure for juding if the trainers[idx] is None
     for i in range(env.n):
         actors_cur[i] = openai_actor(obs_shape_n[i], action_shape_n[i], arglist).to(arglist.device)
@@ -72,8 +77,12 @@ def get_trainers(env, num_adversaries, obs_shape_n, action_shape_n, arglist):
         critics_tar[i] = openai_critic(sum(obs_shape_n), sum(action_shape_n), arglist).to(arglist.device)
         optimizers_a[i] = optim.Adam(actors_cur[i].parameters(), arglist.lr_a)
         optimizers_c[i] = optim.Adam(critics_cur[i].parameters(), arglist.lr_c)
+    # actors_tar[4] = torch.load(arglist.old_model_name + 'a_t_4.pt')
+    # critics_tar[4] = torch.load(arglist.old_model_name + 'c_t_4.pt')
     actors_tar = update_trainers(actors_cur, actors_tar, 1.0)  # update the target par using the cur
     critics_tar = update_trainers(critics_cur, critics_tar, 1.0)  # update the target par using the cur
+    # actors_tar[4] = torch.load(arglist.old_model_name + 'a_t_4.pt')
+    # critics_tar[4] = torch.load(arglist.old_model_name + 'c_t_4.pt')
     return actors_cur, critics_cur, actors_tar, critics_tar, optimizers_a, optimizers_c
 
 
@@ -96,7 +105,7 @@ def update_trainers(agents_cur, agents_tar, tao):
 
 
 def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, \
-                 actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c):
+                 actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c, idx):
     """ 
     use this func to make the "main" func clean
     par:
@@ -114,7 +123,6 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
         for agent_idx, (actor_c, actor_t, critic_c, critic_t, opt_a, opt_c) in \
                 enumerate(zip(actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c)):
             if opt_c == None: continue  # jump to the next model update
-
             # sample the experience
             _obs_n_o, _action_n, _rew_n, _obs_n_n, _done_n = memory.sample( \
                 arglist.batch_size, agent_idx)  # Note_The func is not the same as others
@@ -146,65 +154,26 @@ def agents_train(arglist, game_step, update_cnt, memory, obs_size, action_size, 
             action_cur_o[:, action_size[agent_idx][0]:action_size[agent_idx][1]] = policy_c_new
             # 计算kl散度
 
+
             loss_kl = torch.zeros(1)
 
 
-            if agent_idx == 1 or agent_idx == 2:
-                actor_kl = actors_cur[2] if agent_idx == 1 else actors_cur[1]
+            if agent_idx == idx:
+                continue
+            else:
+                actor_kl = actors_cur[idx]
                 policy_c_new_kl, _ = actor_kl(\
                     obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
-                # policy_c_new_1 = model_out.softmax(dim=-1)
-                # policy_c_new_kl = policy_c_new_kl.softmax(dim=-1).detach()
-                # print(policy_c_new_1)
-                # print(policy_c_new_kl)
-
                 loss_fn = torch.nn.KLDivLoss()
-                loss_kl = loss_fn(model_out.softmax(dim=-1), policy_c_new_kl.softmax(dim=-1).detach())
-                """
-                
-                for i in range(policy_c_new_1.shape[1]):
-                    kl += policy_c_new_1[:, i].reshape(1256, 1) * torch.log(policy_c_new_1[:,i].reshape(1256, 1) / (policy_c_new_kl[:,i].reshape(1256, 1) + 1e-10) + 1e-10)
-            #   """
-            # print(kl.mean())
+                loss_kl = loss_fn(torch.log(policy_c_new_kl.softmax(dim=-1).detach() + 1e-10), model_out.softmax(dim=-1))
 
-            """
-            for i in range(2):
-                if agent_idx == i or agent_idx > 1:
-                    continue
-                _, policy_c_new_kl = actors_cur[i](\
-                    obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
-                kl += F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
-            """
-
-
-            """   
-            if agent_idx == 2:
-                kl_index = 0
-            else:
-                kl_index = agent_idx + 1
-            # loss_pse = torch.mean(torch.pow(model_out, 2))
-            actor_kl = actors_cur[kl_index]
-            policy_c_new_kl, _ = actor_kl( \
-                obs_n_o[:, obs_size[agent_idx][0]:obs_size[agent_idx][1]], model_original_out=True)
-            
-            # kl = F.kl_div(policy_c_new.softmax(dim=-1).log(), policy_c_new_kl.softmax(dim=-1).detach(), reduction='mean')
-            # print(policy_c_new_kl, " ", model_out)
-            loss_fn = torch.nn.KLDivLoss()
-            loss_kl = loss_fn(model_out.softmax(dim=-1), policy_c_new_kl.softmax(dim=-1).detach())
-            """
-            # loss_a = torch.mul(-1, torch.mean(critic_c(obs_n_o, action_cur_o)))
-
-            # loss_pse = torch.mean(torch.pow(model_out, 2))
+            loss_pse = torch.mean(torch.pow(model_out, 2))
             loss_a = torch.mul(-1, torch.mean(critic_c(obs_n_o, action_cur_o)))
+
             opt_a.zero_grad()
-
-            # (1e-3*loss_pse+loss_a).backward()
-            # (1e-3*loss_pse +loss_a - kl).backward()
-
-            # print(kl.mean())
-            print(loss_kl)
-            (loss_a + loss_kl * 0.0001).backward()
-            # print("kl", kl, " ", agent_idx)
+            (1e-3*loss_pse + loss_a + loss_kl).backward()
+            # loss_a.backward()
+            # (loss_a + 1e-3*loss_pse).backward()
             nn.utils.clip_grad_norm_(actor_c.parameters(), arglist.max_grad_norm)
             opt_a.step()
 
@@ -253,7 +222,7 @@ def evaluate(actors_cur, arglist, env):
                 episode_rewards.append(0)
                 continue
     ret = sum(episode_rewards) / 20.0
-    print(ret)
+    # print(ret)
     return ret
 
 
@@ -306,11 +275,15 @@ def train(arglist):
     print('=============================')
     obs_n = env.reset()
     x_data = []
+    y_data = []
     cnt = 0
-    agent_rewards = [[0.0] for _ in range(env.n)]  # individual agent reward
-    for episode_gone in range(arglist.max_episode):
+    agent_rewards = [[0.0] for _ in range(env.n)]# individual agent reward
+    display = [0] * 5
+
+    for episode_gone in range(1600):
         # cal the reward print the debug data
-        if game_step > 1 and game_step % 1000 == 0:
+        """
+        if game_step > 1 and game_step % 200 == 0 and game_step > arglist.learning_start_step:
             # mean_agents_r = [round(np.mean(agent_rewards[idx][-200:-1]), 2) for idx in range(env.n)]
             # mean_ep_r = round(np.mean(episode_rewards[-200:-1]), 3)
             # print(" "*43 + 'episode reward:{} agents mean reward:{}'.format(mean_ep_r, mean_agents_r), end='\r')
@@ -325,14 +298,24 @@ def train(arglist):
             # plt.plot(range(len(x_data)), x_data, color='red')
             # plt.show()
 
-            if cnt == 20:
+            if game_step == 200000:
                 episode_json = [i for i in range(cnt)]
                 nums = {"episode":episode_json, "rewards":x_data}
-                filename = "kl-simple-push-2vs2-test.json"
+                filename = "kl-simple-spread-5.json"
                 with open(filename, 'w') as file_obj:
                     json.dump(nums, file_obj)
-                return
+                return 
+        """
+
         print('=Training: steps:{} episode:{}'.format(game_step, episode_gone), end='\r')
+
+        idx, maxr = -1, -10000000
+        for i in range(len(display)):
+            if display[i] > maxr:
+                maxr = display[i]
+                idx = i
+            display[i] = 0
+
         for episode_cnt in range(arglist.per_episode_max_len):
             # get action
             action_n = [agent(torch.from_numpy(obs).to(arglist.device, torch.float)).detach().cpu().numpy() \
@@ -340,6 +323,7 @@ def train(arglist):
             # print(action_n)
             # interact with env
             new_obs_n, rew_n, done_n, info_n = env.step(action_n)
+            # print(rew_n)
             """
             if episode_gone > 1500:
                 env.render()
@@ -349,15 +333,12 @@ def train(arglist):
             memory.add(obs_n, np.concatenate(action_n), rew_n, new_obs_n, done_n)
             episode_rewards[-1] += np.sum(rew_n)
             for i, rew in enumerate(rew_n):
-                if i == 1:
-                    agent_rewards[i][-1] -= rew
-                    continue
                 agent_rewards[i][-1] += rew
-
+                display[i] += rew
             # train our agents 
             update_cnt, actors_cur, actors_tar, critics_cur, critics_tar = agents_train( \
                 arglist, game_step, update_cnt, memory, obs_size, action_size, \
-                actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c)
+                actors_cur, actors_tar, critics_cur, critics_tar, optimizers_a, optimizers_c, idx)
 
             # update the obs_n
             game_step += 1
@@ -372,7 +353,14 @@ def train(arglist):
                 for a_r in agent_rewards:
                     a_r.append(0)
                 continue
-
+        if game_step > arglist.learning_start_step:
+            x_data.append(evaluate(actors_cur, arglist, env))
+            y_data.append(cnt)
+            cnt += 1
+    nums = {"episode": y_data, "rewards": x_data}
+    filename = "kl-simple-spread-5.json"
+    with open(filename, 'w') as file_obj:
+        json.dump(nums, file_obj)
 
 if __name__ == '__main__':
     arglist = parse_args()
